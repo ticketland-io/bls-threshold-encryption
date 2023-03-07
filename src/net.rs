@@ -25,6 +25,7 @@ impl Net {
       ..Default::default()
     }
   }
+
   pub fn broadcast(&mut self, source: NodeId, vote: DkgSignedVote) {
     let packets: Vec<Packet> = self.nodes.iter()
     .map(|node| DkgState::id(node.dkg_state.as_ref().unwrap()))
@@ -34,5 +35,16 @@ impl Net {
       vote: vote.clone(),
     })
     .collect();
+
+    self.enqueue_packets(packets);
+  }
+
+  fn enqueue_packets(&mut self, packets: Vec<Packet>) {
+    for packet in packets {
+      self.packets
+      .entry(packet.source)
+      .or_default()
+      .push_back(packet);
+    }
   }
 }
