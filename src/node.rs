@@ -26,13 +26,18 @@ impl Node {
     }
   }
 
-  pub fn init(&mut self, threshold: usize, pub_keys: &BTreeMap<NodeId, PublicKey>) {
+  pub fn init(
+    &mut self,
+    threshold: usize,
+    pub_keys: &BTreeMap<NodeId, PublicKey>,
+    rng: &mut OsRng,
+  ) {
     self.dkg_state = Some(DkgState::new(
       self.id,
       self.secret_key.clone(),
       pub_keys.clone(),
       threshold,
-      &mut OsRng,
+      rng,
     ).expect("DKG state to be created"));
   }
 }
