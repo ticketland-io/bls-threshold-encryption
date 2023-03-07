@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use blsttc::{
-  rand::{random, rngs::OsRng, RngCore}, PublicKey, SecretKey,
+  rand::{random, rngs::OsRng}, PublicKey, SecretKey,
 };
 use sn_sdkg::{
   NodeId, DkgState
