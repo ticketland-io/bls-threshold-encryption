@@ -1,14 +1,17 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use bls_threshold_encryption::{
   node::Node, net::Net,
 };
+use log::info;
 use blsttc::{rand::rngs::OsRng, PublicKey};
 use sn_sdkg::NodeId;
 
 fn main() {
+  env_logger::init();
+
   let mut rng = OsRng;
-  let node_count = 10;
-  let threshold = 7;
+  let node_count = 3;
+  let threshold = 1;
 
   // create 10 nodes
   let mut nodes = (0..node_count).map(|i| Node::new(i)).collect::<Vec<_>>();
@@ -35,5 +38,19 @@ fn main() {
 
   // let everyone vote
   net.drain_queued_packets(rng).expect("everyone votes");
+
+  // check that everyone reached termination on the same pubkeyset
+  let mut pubs = BTreeSet::new();
+  for node in net.nodes.into_iter() {
+    let (pks, _sks) = node
+    .outcome()
+    .expect("Unexpectedly failed to generate keypair")
+    .unwrap();
+
+    pubs.insert(pks);
+  }
+
+  assert!(pubs.len() == 1);
+  info!(">>>>>> {:?}", pubs);
 }
 
