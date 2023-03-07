@@ -11,7 +11,7 @@ pub struct Node {
   node_id: NodeId,
   secret_key: SecretKey,
   pub pub_key: PublicKey,
-  dkg_state: Option<DkgState>,
+  pub dkg_state: Option<DkgState>,
 }
 
 impl Node {
