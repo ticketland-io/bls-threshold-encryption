@@ -9,6 +9,8 @@ edition = "2021"
 blsttc = "8.0.2"
 eyre = "0.6.8"
 env_logger = "0.10.0"
+hex = "0.4.3"
+itertools = "0.10.5"
 sn_sdkg = "3.1.2"
 tokio = { version = "1.26.0", features = ["rt"] }
 log = "0.4.17"
