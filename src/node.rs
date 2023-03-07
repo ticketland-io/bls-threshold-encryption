@@ -1,5 +1,4 @@
-use std::collections::BTreeMap;
-
+use std::{collections::BTreeMap, ops::{Deref, DerefMut}};
 use blsttc::{
   rand::{random, rngs::OsRng}, PublicKey, SecretKey,
 };
@@ -35,5 +34,19 @@ impl Node {
       threshold,
       &mut OsRng,
     ).expect("DKG state to be created"));
+  }
+}
+
+impl Deref for Node {
+  type Target = DkgState;
+
+  fn deref(&self) -> &Self::Target {
+    self.dkg_state.as_ref().expect("state to be initialized")
+  }
+}
+
+impl DerefMut for Node {
+  fn deref_mut(&mut self) -> &mut Self::Target {
+    self.dkg_state.as_mut().expect("state to be initialized")
   }
 }
