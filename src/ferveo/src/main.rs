@@ -11,28 +11,39 @@ use ferveo_common::{Keypair, ExternalValidator};
 use measure_time::print_time;
 use tpke::{
   Ciphertext, DecryptionShareSimple, prepare_combine_simple,
-  share_combine_simple,
+  checked_decrypt_with_shared_secret,
 };
 
 type Fqk = <EllipticCurve as PairingEngine>::Fqk;
 
 fn main() {
-  let rng = &mut ark_std::test_rng();
-  let dkg = setup_dealt_dkg(5, 9, rng);
+  let validator_keypairs = gen_keypairs(10);
+  let dkg = setup_dealt_dkg(7, 10);
   
   let msg = "This is a secret message we want to encrypt using the Pubic key set".as_bytes();
   let aad: &[u8] = " additional_authenticated_data".as_bytes();
-  let ciphertext = encrypt(dkg, msg, aad);
+  let ciphertext = encrypt(&dkg, msg, aad);
+  let (_, _, shared_secret) = decrypt(&dkg, aad, &ciphertext, &validator_keypairs);
+
+  let plaintext = checked_decrypt_with_shared_secret(
+    &ciphertext,
+    aad,
+    &dkg.pvss_params.g_inv(),
+    &shared_secret,
+  ).unwrap();
+
+  assert_eq!(plaintext, msg);
+
+  println!("Plaintext: {}", String::from_utf8(plaintext).unwrap());
 }
 
 /// Encrypts using the threshold public key for the given dkg session
-fn encrypt(dkg: PubliclyVerifiableDkg<EllipticCurve>, msg: &[u8], aad: &[u8]) -> Ciphertext<EllipticCurve> {
+fn encrypt(dkg: &PubliclyVerifiableDkg<EllipticCurve>, msg: &[u8], aad: &[u8]) -> Ciphertext<EllipticCurve> {
   let rng = &mut test_rng();
   let public_key = dkg.final_key();
   
   tpke::encrypt::<_, EllipticCurve>(msg, aad, &public_key, rng)
 }
-
 
 fn decrypt(
   dkg: &PubliclyVerifiableDkg<EllipticCurve>,
@@ -86,28 +97,30 @@ fn decrypt(
   (pvss_aggregated, decryption_shares, shared_secret)
 }
 
-
 /// Set up a dkg with enough pvss transcripts to meet the threshold
-fn setup_dealt_dkg(num: u64, shares: u32, rng: &mut StdRng) -> PubliclyVerifiableDkg<EllipticCurve> {
+fn setup_dealt_dkg(security_threshold: u32, shares: u32) -> PubliclyVerifiableDkg<EllipticCurve> {
+  let rng = &mut ark_std::test_rng();
+
   // gather everyone's transcripts
   let mut transcripts = vec![];
-  for i in 0..num {
-    let mut dkg = setup_dkg(i as usize, num, shares);
+  
+  for i in 0..security_threshold {
+    let mut dkg = setup_dkg(i as usize, security_threshold, shares);
     transcripts.push(dkg.share(rng).expect("Test failed"));
   }
 
   // our test dkg
-  let mut dkg = setup_dkg(0, num, shares);
+  let mut dkg = setup_dkg(0, security_threshold, shares);
 
   // iterate over transcripts from lowest weight to highest
-  for (sender, pvss) in transcripts.into_iter().rev().enumerate() {
+  for (sender, pvss) in transcripts.into_iter().enumerate() {
     if let Message::Deal(ss) = pvss.clone() {
       print_time!("PVSS verify pvdkg");
       ss.verify_full(&dkg);
     }
     
     dkg.apply_message(
-      dkg.validators[num as usize - 1 - sender].validator.clone(),
+      dkg.validators[sender].validator.clone(),
       pvss,
     )
     .expect("Setup failed");
@@ -119,10 +132,10 @@ fn setup_dealt_dkg(num: u64, shares: u32, rng: &mut StdRng) -> PubliclyVerifiabl
 /// Create a test dkg in state [`DkgState::Init`]
 pub fn setup_dkg(
   validator: usize,
-  num: u64,
-  shares_num: u32
+  security_threshold: u32,
+  shares_num: u32,
 ) -> PubliclyVerifiableDkg<EllipticCurve> {
-  let keypairs = gen_keypairs(num);
+  let keypairs = gen_keypairs(shares_num);
   let validators = gen_validators(&keypairs);
   let me = validators[validator].clone();
   
@@ -130,7 +143,7 @@ pub fn setup_dkg(
     validators,
     Params {
       tau: 0,
-      security_threshold: shares_num / 3,
+      security_threshold,
       shares_num,
     },
     &me,
@@ -140,10 +153,9 @@ pub fn setup_dkg(
 }
 
 /// Generate a set of keypairs for each validator
-pub fn gen_keypairs(num: u64, rng: &mut StdRng) -> Vec<Keypair<EllipticCurve>> {
-  (0..num)
-  .map(|_| Keypair::<EllipticCurve>::new(rng))
-  .collect()
+pub fn gen_keypairs(shares_num: u32) -> Vec<Keypair<EllipticCurve>> {
+  let rng = &mut ark_std::test_rng();
+  (0..shares_num).map(|_| Keypair::<EllipticCurve>::new(rng)).collect()
 }
 
 /// Generate a few validators
