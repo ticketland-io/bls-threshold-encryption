@@ -1,5 +1,5 @@
 use std::{collections::{BTreeMap, BTreeSet}};
-use bls_threshold_encryption::{
+use blsttc_example::{
   node::Node, net::Net,
 };
 use itertools::Itertools;
@@ -7,8 +7,8 @@ use log::info;
 use blsttc::{rand::rngs::OsRng, PublicKey, PublicKeySet, Ciphertext};
 use sn_sdkg::NodeId;
 
-const NODE_COUNT: usize = 3;
-const THRESHOLD: usize = 1;
+const NODE_COUNT: usize = 10;
+const THRESHOLD: usize = 7;
 
 fn main() {
   env_logger::init();
