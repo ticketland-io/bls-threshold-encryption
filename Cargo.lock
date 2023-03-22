@@ -788,7 +788,11 @@ dependencies = [
 name = "ferveo-example"
 version = "0.1.0"
 dependencies = [
+ "ark-bls12-381",
+ "ark-std",
  "ferveo",
+ "ferveo-common",
+ "measure_time",
 ]
 
 [[package]]

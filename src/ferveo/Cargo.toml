@@ -6,4 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ark-std = "0.3"
+ark-bls12-381 = "0.3"
 ferveo = { path = "../../../nucypher_ferveo/ferveo" }
+ferveo-common = { path = "../../../nucypher_ferveo/ferveo-common" }
+measure_time = "0.8"
