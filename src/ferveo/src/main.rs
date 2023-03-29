@@ -1,5 +1,7 @@
-use ark_bls12_381::Bls12_381 as EllipticCurve;
-use ark_std::{test_rng, rand::rngs::StdRng};
+use ark_bls12_381::{
+  Bls12_381 as EllipticCurve, Fr,
+};
+use ark_std::{test_rng, Zero};
 use ferveo::{
   PubliclyVerifiableDkg, Message, Params,
   vss::*,
@@ -88,13 +90,57 @@ fn decrypt(
   assert_eq!(domain.len(), decryption_shares.len());
 
   let lagrange_coeffs = prepare_combine_simple::<EllipticCurve>(domain);
-
   let shared_secret = tpke::share_combine_simple::<EllipticCurve>(
     &decryption_shares,
     &lagrange_coeffs,
   );
 
   (pvss_aggregated, decryption_shares, shared_secret)
+}
+
+/// We're going to refresh the shares and check that the shared secret is the same
+fn _decrypt_after_share_refresh(
+  _current_shared_secret: Fqk,
+  dkg: &PubliclyVerifiableDkg<EllipticCurve>,
+  aad: &[u8],
+  ciphertext: &Ciphertext<EllipticCurve>,
+  validator_keypairs: &[Keypair<EllipticCurve>],
+) {
+  let rng = &mut test_rng();
+  let pvss_aggregated = aggregate(dkg);
+
+  // Dealer computes a new random polynomial with constant term x_r = 0
+  let polynomial = tpke::make_random_polynomial_at::<EllipticCurve>(
+    dkg.params.security_threshold as usize,
+    &Fr::zero(),
+    rng,
+  );
+
+  // Now Dealer has to share this polynomial with participants
+
+  // Participants computes new decryption shares
+  let new_decryption_shares = validator_keypairs
+  .iter()
+  .enumerate()
+  .map(|(validator_index, validator_keypair)| {
+    pvss_aggregated.refresh_decryption_share(
+      &ciphertext,
+      aad,
+      &validator_keypair.decryption_key,
+      validator_index,
+      &polynomial,
+      &dkg,
+    )
+  })
+  .collect::<Vec<DecryptionShareSimple<EllipticCurve>>>();
+
+  // At this point we can create a new shared secret
+  let domain = &dkg.domain.elements().collect::<Vec<_>>();
+  let lagrange_coeffs = tpke::prepare_combine_simple::<EllipticCurve>(domain);
+  let new_shared_secret = tpke::share_combine_simple::<EllipticCurve>(
+    &new_decryption_shares,
+    &lagrange_coeffs,
+  );
 }
 
 /// Set up a dkg with enough pvss transcripts to meet the threshold
