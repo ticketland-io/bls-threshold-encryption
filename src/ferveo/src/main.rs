@@ -1,7 +1,7 @@
 use ark_bls12_381::{
   Bls12_381 as EllipticCurve, Fr,
 };
-use ark_std::{test_rng, Zero};
+use ark_std::{Zero, rand::{rngs::{StdRng, OsRng}, SeedableRng}};
 use ferveo::{
   PubliclyVerifiableDkg, Message, Params,
   vss::*,
@@ -18,42 +18,55 @@ use tpke::{
 
 type Fqk = <EllipticCurve as PairingEngine>::Fqk;
 
+struct ValidatorData {
+  keypair: Keypair<EllipticCurve>,
+  validator: ExternalValidator<EllipticCurve>,
+  rng: StdRng,
+}
+
 fn main() {
-  let validator_keypairs = gen_keypairs(10);
-  let dkg = setup_dealt_dkg(7, 10);
-  
   let msg = "This is a secret message we want to encrypt using the Pubic key set".as_bytes();
   let aad: &[u8] = " additional_authenticated_data".as_bytes();
-  let ciphertext = encrypt(&dkg, msg, aad);
-  let (_, _, shared_secret) = decrypt(&dkg, aad, &ciphertext, &validator_keypairs);
 
-  let plaintext = checked_decrypt_with_shared_secret(
-    &ciphertext,
-    aad,
-    &dkg.pvss_params.g_inv(),
-    &shared_secret,
-  ).unwrap();
+  let mut validators = gen_validators(3);
+  let dkgs = setup_dealt_dkg(2, 3, &mut validators);
 
-  assert_eq!(plaintext, msg);
+  // Each dkg setup yields a different final_key, however all of them can be used to encrypt data 
+  // that will be later decrypted by each dkg (node) calculating its' decryption share
+  for dkg in &dkgs {
+    let ciphertext = encrypt(&dkg, msg, aad);
 
-  println!("Plaintext: {}", String::from_utf8(plaintext).unwrap());
+    let keypairs = validators.iter().map(|v| v.keypair.clone()).collect::<Vec<_>>();
+    let ( _, shared_secret) = decrypt(&dkg, &dkgs, aad, &ciphertext, &keypairs);
+
+    let plaintext = checked_decrypt_with_shared_secret(
+      &ciphertext,
+      aad,
+      &dkg.pvss_params.g_inv(),
+      &shared_secret,
+    ).unwrap();
+
+    assert_eq!(plaintext, msg);
+
+    println!("Plaintext: {}", String::from_utf8(plaintext).unwrap());
+  }
 }
 
 /// Encrypts using the threshold public key for the given dkg session
 fn encrypt(dkg: &PubliclyVerifiableDkg<EllipticCurve>, msg: &[u8], aad: &[u8]) -> Ciphertext<EllipticCurve> {
-  let rng = &mut test_rng();
+  let mut rng = StdRng::from_rng(OsRng).expect("create StdRng");
   let public_key = dkg.final_key();
-  
-  tpke::encrypt::<_, EllipticCurve>(msg, aad, &public_key, rng)
+
+  tpke::encrypt::<_, EllipticCurve>(msg, aad, &public_key, &mut rng)
 }
 
 fn decrypt(
   dkg: &PubliclyVerifiableDkg<EllipticCurve>,
+  dkgs: &Vec<PubliclyVerifiableDkg<EllipticCurve>>,
   aad: &[u8],
   ciphertext: &Ciphertext<EllipticCurve>,
   validator_keypairs: &[Keypair<EllipticCurve>],
 ) -> (
-  PubliclyVerifiableSS<EllipticCurve, Aggregated>,
   Vec<DecryptionShareSimple<EllipticCurve>>,
   Fqk,
 ) {
@@ -76,7 +89,7 @@ fn decrypt(
       aad,
       &validator_keypair.decryption_key,
       validator_index,
-      &dkg.pvss_params.g_inv(),
+      &dkgs[validator_index].pvss_params.g_inv(),
     )
   })
   .collect::<Vec<DecryptionShareSimple<EllipticCurve>>>();
@@ -88,14 +101,14 @@ fn decrypt(
   .collect::<Vec<_>>();
   
   assert_eq!(domain.len(), decryption_shares.len());
-
+  
   let lagrange_coeffs = prepare_combine_simple::<EllipticCurve>(domain);
   let shared_secret = tpke::share_combine_simple::<EllipticCurve>(
     &decryption_shares,
     &lagrange_coeffs,
   );
 
-  (pvss_aggregated, decryption_shares, shared_secret)
+  (decryption_shares, shared_secret)
 }
 
 /// We're going to refresh the shares and check that the shared secret is the same
@@ -106,14 +119,14 @@ fn _decrypt_after_share_refresh(
   ciphertext: &Ciphertext<EllipticCurve>,
   validator_keypairs: &[Keypair<EllipticCurve>],
 ) {
-  let rng = &mut test_rng();
+  let mut rng = StdRng::from_rng(OsRng).expect("create StdRng");
   let pvss_aggregated = aggregate(dkg);
 
   // Dealer computes a new random polynomial with constant term x_r = 0
   let polynomial = tpke::make_random_polynomial_at::<EllipticCurve>(
     dkg.params.security_threshold as usize,
     &Fr::zero(),
-    rng,
+    &mut rng,
   );
 
   // Now Dealer has to share this polynomial with participants
@@ -137,29 +150,36 @@ fn _decrypt_after_share_refresh(
   // At this point we can create a new shared secret
   let domain = &dkg.domain.elements().collect::<Vec<_>>();
   let lagrange_coeffs = tpke::prepare_combine_simple::<EllipticCurve>(domain);
-  let new_shared_secret = tpke::share_combine_simple::<EllipticCurve>(
+  let _new_shared_secret = tpke::share_combine_simple::<EllipticCurve>(
     &new_decryption_shares,
     &lagrange_coeffs,
   );
 }
 
 /// Set up a dkg with enough pvss transcripts to meet the threshold
-fn setup_dealt_dkg(security_threshold: u32, shares: u32) -> PubliclyVerifiableDkg<EllipticCurve> {
-  let rng = &mut ark_std::test_rng();
-
+fn setup_dealt_dkg(
+  security_threshold: u32,
+  shares: u32,
+  validators: &mut Vec<ValidatorData>,
+) -> Vec<PubliclyVerifiableDkg<EllipticCurve>> {
   // gather everyone's transcripts
   let mut transcripts = vec![];
-  
-  for i in 0..security_threshold {
-    let mut dkg = setup_dkg(i as usize, security_threshold, shares);
-    transcripts.push(dkg.share(rng).expect("Test failed"));
-  }
+  let mut dkgs = vec![];
 
-  // our test dkg
-  let mut dkg = setup_dkg(0, security_threshold, shares);
+  let validators = validators;
+  for i in 0..shares {
+    let rng = &mut validators[i as usize].rng.clone();
+    let mut dkg = setup_dkg(i as usize, security_threshold, shares, validators);
+    let share = dkg.share(rng).expect("Test failed");
+
+    transcripts.push(share);
+    dkgs.push(dkg);
+  }
 
   // iterate over transcripts from lowest weight to highest
   for (sender, pvss) in transcripts.into_iter().enumerate() {
+    let dkg = &mut dkgs[sender];
+
     if let Message::Deal(ss) = pvss.clone() {
       print_time!("PVSS verify pvdkg");
       ss.verify_full(&dkg);
@@ -172,44 +192,46 @@ fn setup_dealt_dkg(security_threshold: u32, shares: u32) -> PubliclyVerifiableDk
     .expect("Setup failed");
   }
 
-  dkg
+  dkgs
 }
 
 /// Create a test dkg in state [`DkgState::Init`]
-pub fn setup_dkg(
+fn setup_dkg(
   validator: usize,
   security_threshold: u32,
   shares_num: u32,
+  validators: &mut Vec<ValidatorData>,
 ) -> PubliclyVerifiableDkg<EllipticCurve> {
-  let keypairs = gen_keypairs(shares_num);
-  let validators = gen_validators(&keypairs);
-  let me = validators[validator].clone();
+  let me = validators[validator].validator.clone();
+  let keypair = validators[validator].keypair.clone();
   
-  PubliclyVerifiableDkg::new(
-    validators,
+  let dkg = PubliclyVerifiableDkg::new(
+    validators.iter().map(|v| v.validator.clone()).collect(),
     Params {
       tau: 0,
       security_threshold,
       shares_num,
     },
     &me,
-    keypairs[validator],
+    keypair,
   )
-  .expect("Setup failed")
-}
+  .expect("Setup failed");
 
-/// Generate a set of keypairs for each validator
-pub fn gen_keypairs(shares_num: u32) -> Vec<Keypair<EllipticCurve>> {
-  let rng = &mut ark_std::test_rng();
-  (0..shares_num).map(|_| Keypair::<EllipticCurve>::new(rng)).collect()
+  dkg
 }
 
 /// Generate a few validators
-pub fn gen_validators(keypairs: &[Keypair<EllipticCurve>]) -> Vec<ExternalValidator<EllipticCurve>> {
-  (0..keypairs.len())
-  .map(|i| ExternalValidator {
-    address: format!("validator_{}", i),
-    public_key: keypairs[i].public(),
+fn gen_validators(shares_num: u32) -> Vec<ValidatorData> {
+  (0..shares_num)
+  .map(|i| {
+    let mut rng = StdRng::from_rng(OsRng).expect("create StdRng");
+    let keypair = Keypair::<EllipticCurve>::new(&mut rng);
+    let validator = ExternalValidator {
+      address: format!("validator_{}", i),
+      public_key: keypair.public(),
+    };
+
+    ValidatorData {keypair, validator, rng}
   })
   .collect()
 }
