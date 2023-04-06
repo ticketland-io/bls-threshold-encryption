@@ -11,11 +11,11 @@
       "cargo": {
         "args": [
           "build",
-          "--bin=bls-threshold-encryption",
-          "--package=bls-threshold-encryption"
+          "--bin=ferveo-example",
+          "--package=ferveo-example"
         ],
         "filter": {
-          "name": "bls-threshold-encryption",
+          "name": "ferveo-example",
           "kind": "bin"
         }
       },

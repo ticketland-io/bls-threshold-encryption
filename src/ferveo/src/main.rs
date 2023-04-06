@@ -37,7 +37,21 @@ fn main() {
     let ciphertext = encrypt(&dkg, msg, aad);
 
     let keypairs = validators.iter().map(|v| v.keypair.clone()).collect::<Vec<_>>();
-    let ( _, shared_secret) = decrypt(&dkg, &dkgs, aad, &ciphertext, &keypairs);
+    let decryption_shares = decrypt(&dkg, &dkgs, aad, &ciphertext, &keypairs);
+
+    let domain = &dkg
+    .domain
+    .elements()
+    .take(decryption_shares.len())
+    .collect::<Vec<_>>();
+    
+    assert_eq!(domain.len(), decryption_shares.len());
+    
+    let lagrange_coeffs = prepare_combine_simple::<EllipticCurve>(domain);
+    let shared_secret = tpke::share_combine_simple::<EllipticCurve>(
+      &decryption_shares,
+      &lagrange_coeffs,
+    );
 
     let plaintext = decrypt_with_shared_secret(
       &ciphertext,
@@ -47,7 +61,6 @@ fn main() {
     ).unwrap();
 
     assert_eq!(plaintext, msg);
-
     println!("Plaintext: {}", String::from_utf8(plaintext).unwrap());
   }
 }
@@ -66,10 +79,7 @@ fn decrypt(
   aad: &[u8],
   ciphertext: &Ciphertext<EllipticCurve>,
   validator_keypairs: &[Keypair<EllipticCurve>],
-) -> (
-  Vec<DecryptionShareSimple<EllipticCurve>>,
-  Fqk,
-) {
+) -> Vec<DecryptionShareSimple<EllipticCurve>> {
   // Make sure validators are in the same order dkg is by comparing their public keys
   dkg.validators
   .iter()
@@ -78,12 +88,14 @@ fn decrypt(
     assert_eq!(v.validator.public_key, k.public());
   });
 
-  let pvss_aggregated = aggregate(dkg);
+  // let pvss_aggregated = aggregate(dkg);
 
   let decryption_shares = validator_keypairs
   .iter()
   .enumerate()
   .map(|(validator_index, validator_keypair)| {
+    let pvss_aggregated = aggregate(&dkgs[validator_index]);
+
     pvss_aggregated.make_decryption_share_simple(
       ciphertext,
       aad,
@@ -94,21 +106,7 @@ fn decrypt(
   })
   .collect::<Vec<DecryptionShareSimple<EllipticCurve>>>();
 
-  let domain = &dkg
-  .domain
-  .elements()
-  .take(decryption_shares.len())
-  .collect::<Vec<_>>();
-  
-  assert_eq!(domain.len(), decryption_shares.len());
-  
-  let lagrange_coeffs = prepare_combine_simple::<EllipticCurve>(domain);
-  let shared_secret = tpke::share_combine_simple::<EllipticCurve>(
-    &decryption_shares,
-    &lagrange_coeffs,
-  );
-
-  (decryption_shares, shared_secret)
+  decryption_shares
 }
 
 /// We're going to refresh the shares and check that the shared secret is the same
