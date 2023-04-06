@@ -6,12 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ark-bls12-381 = "0.3"
-ark-ec = "0.3"
-ark-std = "0.3"
-ark-poly = "0.3"
-ferveo = { path = "../../../nucypher_ferveo/ferveo" }
-ferveo-common = { path = "../../../nucypher_ferveo/ferveo-common" }
+ark-bls12-381 = "0.4"
+ark-ec = "0.4"
+ark-std = "0.4"
+ark-poly = "0.4"
+ferveo = { git = "https://github.com/nucypher/ferveo", rev = "8fa25b6" }
+ferveo-common = { git = "https://github.com/nucypher/ferveo", rev = "8fa25b6" }
+tpke = { git = "https://github.com/nucypher/ferveo", rev = "8fa25b6", package = "group-threshold-cryptography", features = ["api"] }
 itertools = "0.10.5"
-tpke = { path = "../../../nucypher_ferveo/tpke", package = "group-threshold-cryptography" }
 measure_time = "0.8"

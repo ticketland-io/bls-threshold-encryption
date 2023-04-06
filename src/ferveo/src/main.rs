@@ -4,19 +4,19 @@ use ark_bls12_381::{
 use ark_std::{Zero, rand::{rngs::{StdRng, OsRng}, SeedableRng}};
 use ferveo::{
   PubliclyVerifiableDkg, Message, Params,
-  vss::*,
+  pvss::*,
 };
 use itertools::Itertools;
-use ark_ec::PairingEngine;
+use ark_ec::{pairing::Pairing};
 use ark_poly::EvaluationDomain;
 use ferveo_common::{Keypair, ExternalValidator};
 use measure_time::print_time;
 use tpke::{
   Ciphertext, DecryptionShareSimple, prepare_combine_simple,
-  checked_decrypt_with_shared_secret,
+  decrypt_with_shared_secret,
 };
 
-type Fqk = <EllipticCurve as PairingEngine>::Fqk;
+type Fqk = <EllipticCurve as Pairing>::TargetField;
 
 struct ValidatorData {
   keypair: Keypair<EllipticCurve>,
@@ -28,8 +28,8 @@ fn main() {
   let msg = "This is a secret message we want to encrypt using the Pubic key set".as_bytes();
   let aad: &[u8] = " additional_authenticated_data".as_bytes();
 
-  let mut validators = gen_validators(3);
-  let dkgs = setup_dealt_dkg(2, 3, &mut validators);
+  let mut validators = gen_validators(4);
+  let dkgs = setup_dealt_dkg(3, 4, &mut validators);
 
   // Each dkg setup yields a different final_key, however all of them can be used to encrypt data 
   // that will be later decrypted by each dkg (node) calculating its' decryption share
@@ -39,11 +39,11 @@ fn main() {
     let keypairs = validators.iter().map(|v| v.keypair.clone()).collect::<Vec<_>>();
     let ( _, shared_secret) = decrypt(&dkg, &dkgs, aad, &ciphertext, &keypairs);
 
-    let plaintext = checked_decrypt_with_shared_secret(
+    let plaintext = decrypt_with_shared_secret(
       &ciphertext,
       aad,
-      &dkg.pvss_params.g_inv(),
       &shared_secret,
+      &dkg.pvss_params.g_inv(),
     ).unwrap();
 
     assert_eq!(plaintext, msg);
@@ -57,7 +57,7 @@ fn encrypt(dkg: &PubliclyVerifiableDkg<EllipticCurve>, msg: &[u8], aad: &[u8]) -
   let mut rng = StdRng::from_rng(OsRng).expect("create StdRng");
   let public_key = dkg.final_key();
 
-  tpke::encrypt::<_, EllipticCurve>(msg, aad, &public_key, &mut rng)
+  tpke::encrypt::<EllipticCurve>(msg, aad, &public_key, &mut rng).expect("encrypt")
 }
 
 fn decrypt(
@@ -90,7 +90,7 @@ fn decrypt(
       &validator_keypair.decryption_key,
       validator_index,
       &dkgs[validator_index].pvss_params.g_inv(),
-    )
+    ).expect("decryption share")
   })
   .collect::<Vec<DecryptionShareSimple<EllipticCurve>>>();
 
@@ -143,7 +143,7 @@ fn _decrypt_after_share_refresh(
       validator_index,
       &polynomial,
       &dkg,
-    )
+    ).expect("refresh share")
   })
   .collect::<Vec<DecryptionShareSimple<EllipticCurve>>>();
 
@@ -204,9 +204,10 @@ fn setup_dkg(
 ) -> PubliclyVerifiableDkg<EllipticCurve> {
   let me = validators[validator].validator.clone();
   let keypair = validators[validator].keypair.clone();
-  
+  let validators = validators.iter().map(|v| v.validator.clone()).collect::<Vec<ExternalValidator<EllipticCurve>>>();
+
   let dkg = PubliclyVerifiableDkg::new(
-    validators.iter().map(|v| v.validator.clone()).collect(),
+    &validators,
     Params {
       tau: 0,
       security_threshold,
