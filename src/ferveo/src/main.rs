@@ -88,8 +88,6 @@ fn decrypt(
     assert_eq!(v.validator.public_key, k.public());
   });
 
-  // let pvss_aggregated = aggregate(dkg);
-
   let decryption_shares = validator_keypairs
   .iter()
   .enumerate()
@@ -174,20 +172,20 @@ fn setup_dealt_dkg(
     dkgs.push(dkg);
   }
 
-  // iterate over transcripts from lowest weight to highest
-  for (sender, pvss) in transcripts.into_iter().enumerate() {
-    let dkg = &mut dkgs[sender];
-
-    if let Message::Deal(ss) = pvss.clone() {
-      print_time!("PVSS verify pvdkg");
-      ss.verify_full(&dkg);
+  // Every validator should apply every transcript from other validators
+  for dkg in dkgs.iter_mut() {
+    for (sender, pvss) in transcripts.iter().enumerate() {
+      if let Message::Deal(ss) = pvss.clone() {
+        print_time!("PVSS verify pvdkg");
+        ss.verify_full(&dkg);
+      }
+      
+      dkg.apply_message(
+        dkg.validators[sender].validator.clone(),
+        pvss.clone(),
+      )
+      .expect("Setup failed");
     }
-    
-    dkg.apply_message(
-      dkg.validators[sender].validator.clone(),
-      pvss,
-    )
-    .expect("Setup failed");
   }
 
   dkgs
